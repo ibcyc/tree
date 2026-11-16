@@ -26,300 +26,335 @@
 
 <script>
 (() => {
+  // ════════════════════════════════════════════════════════════════
+  //  1. The flat tree — identical to /2d (same seed, same steps), so
+  //     the front view at rest is exactly the 2D picture.
+  // ════════════════════════════════════════════════════════════════
+  const W = 72, H = 32, CX = 36;
+  const GROUND = 30;
+  const GROUND_X0 = 8, GROUND_X1 = 63;
+
+  const GREENS  = ['#3f8a44', '#4f9a4a', '#5fae55', '#6fbf5e', '#86c86c', '#4a7f3c'];
+  const YELLOWS = ['#b9cf52', '#d2d35a', '#e2c75a'];
+  const WOOD = '#9a7a5a', WOOD_DARK = '#7d6248', GRASS = '#5f7a4c', DIRT = '#6b6256';
+  const LEAF_CH = '&&&%%@@*#o';
+  const leafColor = (r = Math.random) => r() < 0.14 ? pick(YELLOWS, r) : pick(GREENS, r);
+
+  let seed = 1116;
+  const srnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const rnd = Math.random;
+  function pick(a, r = rnd) { return a[(r() * a.length) | 0]; }
+
+  const ch   = Array.from({ length: H }, () => Array(W).fill(' '));
+  const col  = Array.from({ length: H }, () => Array(W).fill(''));
+  const kind = Array.from({ length: H }, () => Array(W).fill(0));
+  // extra bookkeeping for 3D (does not touch the random sequence)
+  const tag  = Array.from({ length: H }, () => Array(W).fill(null));
+  let curTag = null;
+  const set = (x, y, c, color, k) => {
+    if (x < 0 || x >= W || y < 0 || y >= H) return;
+    ch[y][x] = c; col[y][x] = color; kind[y][x] = k; tag[y][x] = curTag;
+  };
+  const isEmpty = (x, y) => x >= 0 && x < W && y >= 0 && y < H && kind[y][x] === 0;
+
+  // ground
+  for (let x = GROUND_X0; x <= GROUND_X1; x++) {
+    const r = srnd();
+    curTag = { t: 'ground' };
+    set(x, GROUND, r < 0.12 ? ',' : r < 0.2 ? '.' : '_', GRASS, 2);
+    curTag = { t: 'speck' };
+    if (srnd() < 0.07) set(x, GROUND - 1, srnd() < 0.5 ? "'" : ',', GRASS, 2);
+    if (srnd() < 0.18) set(x, GROUND + 1, srnd() < 0.5 ? '.' : '`', DIRT, 2);
+  }
+
+  // trunk
+  const T = 20;
+  const trunk = [];
+  const phase = srnd() * Math.PI;
+  for (let i = 0; i <= T; i++) {
+    trunk.push(CX + Math.round(Math.sin(i * 0.14 + phase) * 1.6 - Math.sin(phase) * 1.6));
+  }
+  for (let i = 0; i <= T; i++) {
+    const y = GROUND - 1 - i, x = trunk[i];
+    const dx = i ? x - trunk[i - 1] : 0;
+    const c = dx > 0 ? '/' : dx < 0 ? '\\' : '|';
+    const w = i < 6 ? 3 : i < 13 ? 2 : 1;
+    const x0 = w === 1 ? x : x - 1;
+    curTag = { t: 'trunk', cx: x0 + (w - 1) / 2, r: w === 3 ? 1.7 : w === 2 ? 1.2 : 0.7 };
+    for (let k = 0; k < w; k++) set(x0 + k, y, c, k === 0 && w > 1 ? WOOD_DARK : WOOD, 2);
+  }
+  curTag = { t: 'root' };
+  set(trunk[0] - 2, GROUND - 1, '/', WOOD_DARK, 2);
+  set(trunk[0] + 2, GROUND - 1, '\\', WOOD_DARK, 2);
+  set(trunk[0] - 3, GROUND, '_', WOOD_DARK, 2);
+  set(trunk[0] + 3, GROUND, '_', WOOD_DARK, 2);
+
+  // branches
+  const branches = [];
+  const branch = (i, dir, len, every) => {
+    const id = branches.length;
+    let x = trunk[i] + dir * (i < 13 ? 1 : 0), y = GROUND - 1 - i;
+    const b = { x0: x, y0: y };
+    branches.push(b);
+    for (let k = 1; k <= len; k++) {
+      x += dir;
+      curTag = { t: 'branch', id, f: k / len };
+      if (k % every === 0) { y--; set(x, y, dir > 0 ? '/' : '\\', WOOD, 2); }
+      else set(x, y, '_', WOOD, 2);
+    }
+    b.x1 = x; b.y1 = y;
+    return [x, y];
+  };
+
+  // foliage pads
+  const SHAPE = [0.85, 1, 0.95, 0.75, 0.45];
+  const pads = [];
+  const pad = (cx, cy, pw, ph, zc) => {
+    const id = pads.length;
+    pads.push({ cx, cy, pw, ph, zc });
+    curTag = { t: 'leaf', id };
+    for (let r = 0; r < ph; r++) {
+      const w = Math.round(pw * SHAPE[r] + (srnd() - 0.5) * 2);
+      for (let dc = -w; dc <= w; dc++) {
+        if (Math.abs(dc) > w - 2 && srnd() < 0.35) continue;
+        if (srnd() < 0.94 && isEmpty(cx + dc, cy - r)) set(cx + dc, cy - r, pick(LEAF_CH, srnd), leafColor(srnd), 1);
+      }
+    }
+    for (let dc = -pw + 2; dc <= pw - 2; dc++)
+      if (srnd() < 0.2 && isEmpty(cx + dc, cy + 1)) set(cx + dc, cy + 1, pick(LEAF_CH, srnd), leafColor(srnd), 1);
+  };
+
+  const tiers = [
+    [6, -1, 13, 4, 11, 4],
+    [7,  1, 13, 4, 11, 4],
+    [11, -1, 11, 3, 10, 4],
+    [12,  1, 11, 3, 10, 4],
+    [15, -1, 7, 3, 9, 4],
+    [16,  1, 7, 2, 8, 4],
+  ];
+  // how far each tier's pad sits in front of (−) or behind (+) the trunk — invisible from the front
+  const TIER_Z = [-9, 8, 9, -8, -5, 6];
+  const tips = tiers.map(([i, dir, len, every, pw, ph]) => [branch(i, dir, len, every), dir, pw, ph]);
+  tiers.forEach((_, n) => { branches[n].z1 = TIER_Z[n]; });
+  pad(trunk[T], GROUND - 1 - T, 11, 5, 0);
+  for (let n = tips.length - 1; n >= 0; n--) {
+    const [[x, y], dir, pw, ph] = tips[n];
+    pad(x - dir * 3, y, pw, ph, TIER_Z[n]);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  2. Give every character a depth: each cell becomes a column of
+  //     points along z. The front-most point keeps the 2D character.
+  // ════════════════════════════════════════════════════════════════
+  let seed2 = 77;
+  const r2 = () => (seed2 = (seed2 * 1664525 + 1013904223) >>> 0) / 4294967296;
+
+  const COLORS = [...GREENS, ...YELLOWS, WOOD, WOOD_DARK, GRASS, DIRT];
+  const cIdx = c => COLORS.indexOf(c);
+  const FACT = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.08, 1.16, 1.24];
+  const REST_LV = 5;
+  const PAL = COLORS.map(h => FACT.map(f => {
+    const v = [1, 3, 5].map(i => Math.min(255, Math.round(parseInt(h.slice(i, i + 2), 16) * f)));
+    return `rgb(${v.join(',')})`;
+  }));
+
+  const PXa = [], PRa = [], PZa = [], CHa = [], COa = [], BRa = [], CLa = [];
+  let nCols = 0;
+  const colFront = [];          // per column: index of its front point, for falling leaves
+  const addCol = (x, y, z0, z1, step, frontCh, frontCo, fill) => {
+    const cid = nCols++;
+    colFront.push(PXa.length);
+    for (let z = z0, first = true; z <= z1 + 1e-6; z += step, first = false) {
+      const [c, co] = first ? [frontCh, frontCo] : fill();
+      if (c === null) continue;
+      PXa.push(x - CX); PRa.push(y); PZa.push(z); CHa.push(c); COa.push(cIdx(co));
+      BRa.push(curBranch); CLa.push(cid);
+    }
+    return cid;
+  };
+  let curBranch = -1;
+  const leafCols = [];
+  const RG = 28;                                              // ground disc radius
+
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const tg = tag[y][x];
+    if (!tg || ch[y][x] === ' ') continue;
+    const c0 = ch[y][x], co0 = col[y][x];
+    curBranch = -1;
+    if (tg.t === 'leaf') {
+      const p = pads[tg.id];
+      const r = p.cy - y;
+      const w = r >= 0 && r < p.ph ? p.pw * SHAPE[r] : p.pw * 0.55;
+      const d = Math.sqrt(Math.max(0.6, w * w - (x - p.cx) * (x - p.cx)));
+      const cid = addCol(x, y, p.zc - d, p.zc + d, 0.7, c0, co0, () => [pick(LEAF_CH, r2), leafColor(r2)]);
+      leafCols.push({ cid, yellow: YELLOWS.includes(co0) });
+    } else if (tg.t === 'trunk') {
+      const dx = x - tg.cx;
+      const d = Math.sqrt(Math.max(0.2, tg.r * tg.r - dx * dx));
+      addCol(x, y, -d, d, 0.5, c0, co0, () => [c0, WOOD]);
+    } else if (tg.t === 'branch') {
+      const b = branches[tg.id];
+      const zc = (b.z1 || 0) * tg.f;
+      curBranch = tg.id;
+      addCol(x, y, zc - 0.45, zc + 0.45, 0.45, c0, co0, () => [c0, WOOD]);
+    } else if (tg.t === 'root') {
+      addCol(x, y, -0.8, 0.8, 0.8, c0, co0, () => [c0, WOOD_DARK]);
+    } else if (tg.t === 'ground') {
+      const R = Math.sqrt(Math.max(0, RG * RG - (x - CX) * (x - CX)));
+      addCol(x, y, -R, R, 1, c0, co0, () => r2() < 0.16 ? [pick('_.,_', r2), GRASS] : [null]);
+    } else {                                                  // single specks of grass / dirt
+      const R = Math.sqrt(Math.max(0, RG * RG - (x - CX) * (x - CX)));
+      const z = (r2() * 2 - 1) * R * 0.8;
+      addCol(x, y, z, z, 1, c0, co0, () => [null]);
+    }
+  }
+
+  const NP = PXa.length;
+  const PX = Float32Array.from(PXa), PR = Float32Array.from(PRa), PZ = Float32Array.from(PZa);
+  const CO = Int16Array.from(COa), BR = Int16Array.from(BRa), CL = Int32Array.from(CLa);
+  const CH = CHa;
+  const hidden = new Uint8Array(nCols);
+
+  // ════════════════════════════════════════════════════════════════
+  //  3. View, rendering
+  // ════════════════════════════════════════════════════════════════
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
   const FONT = 'ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, "Courier New", monospace';
   const BG = '#191919';
-
-  // fixed seed → the same tree on every load (change it for a different tree)
-  let seed = 1116;
-  const srnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
-  const rnd = Math.random;
+  const PIV = 16;                   // tilt around this row
   const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 
-  // ───────────────────────── colours ─────────────────────────
-  const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
-  const mixc = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
-  const LV = 12;                                   // brightness levels
-  const shade = (c, lv) => {
-    const f = 0.3 + 0.9 * lv / (LV - 1);
-    return `rgb(${c.map(v => Math.min(255, Math.round(v * f))).join(',')})`;
-  };
-  const G_DARK = hex('#3d7f3f'), G_LIGHT = hex('#7cc466'), YEL = hex('#dccf5c');
-  const SHADES = 4, MIXES = 6;
-  const LEAF_PAL = [];
-  for (let s = 0; s < SHADES; s++) for (let m = 0; m < MIXES; m++) {
-    const base = mixc(mixc(G_DARK, G_LIGHT, s / (SHADES - 1)), YEL, m / (MIXES - 1));
-    LEAF_PAL.push(Array.from({ length: LV }, (_, lv) => shade(base, lv)));
-  }
-  const WOOD_PAL = Array.from({ length: LV }, (_, lv) => shade(hex('#a07f5c'), lv));
-  const GROUND_PAL = Array.from({ length: LV }, (_, lv) => shade(hex('#647f50'), lv));
-  const LEAF_RAMP = '.:*o%&@';                     // dark → bright
-  const GROUND_CH = "_.,.'_,";
-
-  // ───────────────────────── 3D model ─────────────────────────
-  // world units: 1 unit = 1 character width, y is up, the trunk base is the origin
-  const PX = [], PY = [], PZ = [], NX = [], NY = [], NZ = [], TYPE = [], ATTR = [], DITH = [];
-  const add = (x, y, z, nx, ny, nz, type, attr, dith) => {
-    PX.push(x); PY.push(y); PZ.push(z); NX.push(nx); NY.push(ny); NZ.push(nz);
-    TYPE.push(type); ATTR.push(attr); DITH.push(dith);
-  };
-  const LEAF = 0, WOOD = 1, GROUND = 2;
-
-  // smooth colour noise, so neighbouring leaves share a colour and nothing shimmers while turning
-  const ph = Array.from({ length: 5 }, () => srnd() * 6.283);
-  const cnoise = (x, y, z, k) => (
-    Math.sin(x * k + ph[0] + Math.sin(z * k * 0.7 + ph[1])) +
-    Math.sin(z * k * 1.1 + ph[2] + Math.sin(y * k * 1.3 + ph[3])) +
-    Math.sin(y * k * 0.9 + x * k * 0.6 + ph[4])) / 3;
-
-  // tubes (trunk, roots, branches)
-  const segs = [];
-  const tube = (a, b, ra, rb) => {
-    const si = segs.length;
-    segs.push([a.x, a.y, a.z, b.x, b.y, b.z]);
-    let wx = b.x - a.x, wy = b.y - a.y, wz = b.z - a.z;
-    const len = Math.hypot(wx, wy, wz); wx /= len; wy /= len; wz /= len;
-    let hx = 0, hy = 1, hz = 0;
-    if (Math.abs(wy) > 0.9) { hx = 1; hy = 0; }
-    let ux = wy * hz - wz * hy, uy = wz * hx - wx * hz, uz = wx * hy - wy * hx;
-    const ul = Math.hypot(ux, uy, uz); ux /= ul; uy /= ul; uz /= ul;
-    const vx = wy * uz - wz * uy, vy = wz * ux - wx * uz, vz = wx * uy - wy * ux;
-    const steps = Math.ceil(len / 0.3);
-    for (let s = 0; s <= steps; s++) {
-      const t = s / steps, r = ra + (rb - ra) * t;
-      const cx = a.x + (b.x - a.x) * t, cy = a.y + (b.y - a.y) * t, cz = a.z + (b.z - a.z) * t;
-      const n = Math.max(8, Math.ceil(2 * Math.PI * r / 0.4));
-      for (let k = 0; k < n; k++) {
-        const ang = (k + (s % 2) * 0.5) / n * Math.PI * 2, c = Math.cos(ang), sn = Math.sin(ang);
-        const ox = c * ux + sn * vx, oy = c * uy + sn * vy, oz = c * uz + sn * vz;
-        add(cx + ox * r, cy + oy * r, cz + oz * r, ox, oy, oz, WOOD, si, 0);
-      }
-    }
-  };
-
-  // foliage pad: a flat-bottomed, lumpy ellipsoid shell
-  const pad = (cx, cy, cz, rx, ry) => {
-    const area = 4 * Math.PI * Math.pow((2 * Math.pow(rx * ry, 1.6) + Math.pow(rx * rx, 1.6)) / 3, 1 / 1.6);
-    const N = Math.round(area * 3);
-    const p1 = srnd() * 6.283, p2 = srnd() * 6.283, p3 = srnd() * 6.283;
-    for (let i = 0; i < N; i++) {
-      const dy = 1 - 2 * (i + 0.5) / N, rr = Math.sqrt(1 - dy * dy), th = i * 2.399963;
-      const dx = rr * Math.cos(th), dz = rr * Math.sin(th);
-      const ryy = dy < 0 ? ry * 0.55 : ry;
-      const bump = 1 + 0.16 * (0.5 * Math.sin(3.1 * dx + 2.3 * dz + p1) + 0.5 * Math.sin(2.7 * dz - 3.3 * dy + p2))
-                     + 0.05 * Math.sin(9 * dx + 7 * dz + p3) + (srnd() - 0.5) * 0.08;
-      const x = cx + dx * rx * bump, y = cy + dy * ryy * bump, z = cz + dz * rx * bump;
-      let nx = dx / rx, ny = dy / ryy, nz = dz / rx;
-      const nl = Math.hypot(nx, ny, nz); nx /= nl; ny /= nl; nz /= nl;
-      const yel = clamp(Math.round((cnoise(x, y, z, 0.11) - 0.28) * 3.2 * (MIXES - 1)), 0, MIXES - 1);
-      const shd = clamp(Math.round(((cnoise(x + 40, y, z - 30, 0.17) + 1) / 2) * (SHADES - 1) + (srnd() - 0.5) * 0.8), 0, SHADES - 1);
-      add(x, y, z, nx, ny, nz, LEAF, shd * MIXES + yel, (srnd() - 0.5) * 0.14);
-    }
-  };
-
-  // trunk: gently curving, tapering
-  const TN = 14, TH = 48;
-  const t1 = srnd() * 6.283, t2 = srnd() * 6.283;
-  const trunk = [];
-  for (let i = 0; i <= TN; i++) {
-    const t = i / TN;
-    trunk.push({
-      x: 1.8 * (Math.sin(t * 3.2 + t1) - Math.sin(t1)), y: t * TH,
-      z: 1.8 * (Math.sin(t * 2.7 + t2) - Math.sin(t2)), r: 2.1 - 1.5 * t,
-    });
-  }
-  for (let i = 0; i < TN; i++) tube(trunk[i], trunk[i + 1], trunk[i].r, trunk[i + 1].r);
-  const trunkAt = h => {
-    const f = h / TH * TN, i = Math.min(TN - 1, f | 0), t = f - i, a = trunk[i], b = trunk[i + 1];
-    return { x: a.x + (b.x - a.x) * t, y: h, z: a.z + (b.z - a.z) * t, r: a.r + (b.r - a.r) * t };
-  };
-
-  // roots
-  for (let k = 0; k < 5; k++) {
-    const a = k / 5 * 6.283 + srnd() * 0.6, l = 3.5 + srnd() * 2;
-    tube({ x: 0, y: 2, z: 0 }, { x: Math.cos(a) * l, y: 0.1, z: Math.sin(a) * l }, 1.1, 0.3);
-  }
-
-  // branches in three tiers, each ending in a foliage pad
-  const tiers = [
-    // height, count, length, rise, branch radius, pad rx, pad ry
-    [17, 4, 21, 0.32, 0.95, 11, 4.6],
-    [27, 4, 16, 0.40, 0.8, 10, 4.4],
-    [36, 3, 10, 0.50, 0.65, 8.5, 4.2],
-  ];
-  let ang = srnd() * 6.283;
-  const pads = [];
-  for (const [h, count, len, rise, br, rx, ry] of tiers) {
-    for (let k = 0; k < count; k++) {
-      ang += 2.399963 + (srnd() - 0.5) * 0.3;
-      const s = trunkAt(h + (srnd() - 0.5) * 3), dx = Math.cos(ang), dz = Math.sin(ang);
-      const L = len * (0.88 + srnd() * 0.24);
-      const m = { x: s.x + dx * L * 0.5, y: s.y + L * rise * 0.3, z: s.z + dz * L * 0.5 };
-      const e = { x: s.x + dx * L, y: s.y + L * rise, z: s.z + dz * L };
-      tube(s, m, br, br * 0.7);
-      tube(m, e, br * 0.7, br * 0.4);
-      pads.push([e.x - dx * 1.5, e.y + ry * 0.55, e.z - dz * 1.5, rx * (0.92 + srnd() * 0.16), ry]);
-    }
-  }
-  const top = trunk[TN];
-  pads.push([top.x, top.y + 3, top.z, 11, 5.5]);
-  for (const p of pads) pad(...p);
-
-  // ground: a round patch of grass
-  for (let i = 0; i < 260; i++) {
-    const r = 27 * Math.sqrt(srnd()), a = srnd() * 6.283;
-    add(Math.cos(a) * r, 0, Math.sin(a) * r, 0, 1, 0, GROUND, (srnd() * GROUND_CH.length) | 0, 0);
-  }
-
-  const NP = PX.length;
-  const leafIdx = [];
-  for (let i = 0; i < NP; i++) if (TYPE[i] === LEAF) leafIdx.push(i);
-
-  // ───────────────────────── view ─────────────────────────
-  const PIV = 26;          // rotate / tilt around this height, kept at screen centre
-  const D = 300;           // camera distance (mild perspective)
-  const TREE_W = 74, TREE_H = 76;
-  let yaw = 0.6, pitch = 0.2, vel = 0;   // only turns when dragged (plus a short glide after letting go)
-  // light from upper-left-front, in view space (z < 0 is toward the viewer)
-  const LX = -0.45, LY = 0.65, LZ = -0.62, LL = Math.hypot(LX, LY, LZ);
-  const lx = LX / LL, ly = LY / LL, lz = LZ / LL;
-
-  let W, H, DPR, fs, u, cw, chh, cols, rows, ox, oy;
+  let yaw = 0, pitch = 0, vel = 0, target = 0;
+  let Wpx, Hpx, fs, cw, chh, R, C0, R0, SC, SR, gx0, gy0;
   let depth, owner, stamp, touched, frameId = 0;
+
   const resize = () => {
-    DPR = Math.min(devicePixelRatio || 1, 2);
-    W = innerWidth; H = innerHeight;
-    canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
+    const DPR = Math.min(devicePixelRatio || 1, 2);
+    Wpx = innerWidth; Hpx = innerHeight;
+    canvas.width = Math.round(Wpx * DPR); canvas.height = Math.round(Hpx * DPR);
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.font = `100px ${FONT}`;
     const ratio = ctx.measureText('M').width / 100;
-    fs = Math.min(18, Math.min((W - 32) / TREE_W, (H - 48) / TREE_H) / ratio);
-    u = fs * ratio;          // px per world unit, identical on both axes → no stretching
-    cw = u; chh = fs * 1.15;
-    cols = Math.ceil(W / cw) + 1; rows = Math.ceil(H / chh) + 1;
-    ox = W / 2; oy = H / 2;
-    depth = new Float32Array(cols * rows);
-    owner = new Int32Array(cols * rows);
-    stamp = new Int32Array(cols * rows);
-    touched = new Int32Array(cols * rows);
+    fs = Math.min(16, (Wpx - 32) / W / ratio, (Hpx - 48) / H / 1.15);
+    cw = fs * ratio; chh = fs * 1.15; R = chh / cw;   // R: one row in character widths
+    const gl = (Wpx - W * cw) / 2, gt = (Hpx - H * chh) / 2;
+    C0 = Math.ceil(gl / cw) + 1; R0 = Math.ceil(gt / chh) + 1;
+    gx0 = gl - C0 * cw; gy0 = gt - R0 * chh;
+    SC = W + 2 * C0 + 2; SR = H + 2 * R0 + 2;
+    depth = new Float32Array(SC * SR); owner = new Int32Array(SC * SR);
+    stamp = new Int32Array(SC * SR); touched = new Int32Array(SC * SR);
     ctx.font = `${fs}px ${FONT}`;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'center';
   };
 
-  // ───────────────────────── falling leaves ─────────────────────────
+  let cy, sy, cp, sp;
+  // world → [screen column, screen row, depth] (columns/rows are fractional)
+  const proj = (X, row, Z, out) => {
+    const X1 = X * cy + Z * sy, Z1 = -X * sy + Z * cy;
+    const Yd = (row - PIV) * R;
+    out[0] = CX + X1;
+    out[1] = PIV + (Yd * cp - Z1 * sp) / R;
+    out[2] = Z1 * cp + Yd * sp;
+    return out;
+  };
+  const pt = [0, 0, 0];
+
+  // falling leaves
   const falling = [];
   const dropLeaf = () => {
     for (let tries = 0; tries < 30; tries++) {
-      const i = leafIdx[(rnd() * leafIdx.length) | 0];
-      if (NY[i] > 0.4) continue;                                   // from the sides / underside
-      if (ATTR[i] % MIXES === 0 && rnd() < 0.6) continue;          // yellow ones let go more often
+      const L = leafCols[(rnd() * leafCols.length) | 0];
+      if (hidden[L.cid]) continue;
+      if (!L.yellow && rnd() < 0.55) continue;
+      const i = colFront[L.cid];
+      hidden[L.cid] = 1;
+      setTimeout(() => { hidden[L.cid] = 0; }, 7000 + rnd() * 14000);
       falling.push({
-        x: PX[i] + NX[i] * 0.6, y: PY[i] + NY[i] * 0.6, z: PZ[i] + NZ[i] * 0.6,
-        bx: 0, bz: 0, t: 0,
-        vy: 3.5 + rnd() * 3,
-        ax: 1 + rnd() * 2, az: 1 + rnd() * 2,
-        fx: 1 + rnd() * 1.5, fz: 1 + rnd() * 1.5, p: rnd() * 6.283,
+        bx: PX[i], x: PX[i], row: PR[i], z: PZ[i] - 0.6, bz: PZ[i] - 0.6, t: 0,
+        vy: 1.6 + rnd() * 1.6, amp: 0.6 + rnd() * 1.4, freq: 1 + rnd() * 1.6,
+        zamp: 0.5 + rnd() * 1.5, p: rnd() * 6.283,
         rot: rnd() * 6.283, vr: (rnd() - 0.5) * 4.5,
-        ch: '&%@*'[(rnd() * 4) | 0], col: LEAF_PAL[ATTR[i]][9],
-        rest: -1, op: 1,
+        ch: CH[i], co: PAL[CO[i]][REST_LV], rest: -1, op: 1,
       });
       return;
     }
   };
 
-  // ───────────────────────── render ─────────────────────────
-  const segCh = [];
-  let cy, sy, cp, sp;
-  const proj = (x, y, z, out) => {
-    const X = x * cy + z * sy, Z = -x * sy + z * cy, Yc = y - PIV;
-    const Y2 = Yc * cp + Z * sp, Z2 = -Yc * sp + Z * cp, p = D / (D + Z2);
-    out[0] = ox + X * p * u; out[1] = oy - Y2 * p * u; out[2] = Z2;
-    return out;
-  };
-  const pa = [0, 0, 0], pb = [0, 0, 0];
-
   const draw = () => {
     cy = Math.cos(yaw); sy = Math.sin(yaw); cp = Math.cos(pitch); sp = Math.sin(pitch);
+    // 0 at the front view → exact 2D colours and characters; grows as the tree turns
+    const turn = clamp(Math.abs(sy) * 3 + (1 - cy) * 1.5 + pitch * 4, 0, 1);
 
-    // branch characters follow each segment's on-screen direction
-    for (let s = 0; s < segs.length; s++) {
-      const g = segs[s];
-      proj(g[0], g[1], g[2], pa); proj(g[3], g[4], g[5], pb);
-      const dx = pb[0] - pa[0], dy = pa[1] - pb[1];
-      const lenPx = Math.hypot(dx, dy);
-      if (lenPx < cw * 0.6) { segCh[s] = 'o'; continue; }
-      const deg = Math.atan2(Math.abs(dy), Math.abs(dx)) * 57.3;
-      segCh[s] = deg > 70 ? '|' : deg < 24 ? '_' : (dx * dy > 0 ? '/' : '\\');
-    }
+    // branch characters follow their on-screen direction while turning
+    const brCh = branches.map(b => {
+      const dx = b.x1 - b.x0, dz = b.z1 || 0, dyR = (b.y1 - b.y0) * R;
+      const sx = dx * cy + dz * sy, zr = -dx * sy + dz * cy;
+      const sdy = dyR * cp - zr * sp;                          // + is down
+      if (Math.hypot(sx, sdy) < 1.2) return 'o';
+      const deg = Math.atan2(Math.abs(sdy), Math.abs(sx)) * 57.3;
+      return deg > 70 ? '|' : deg < 24 ? '_' : (sx * sdy < 0 ? '/' : '\\');
+    });
 
-    // z-buffer: nearest point wins each character cell
     frameId++;
     let nT = 0;
     for (let i = 0; i < NP; i++) {
-      const x = PX[i], z = PZ[i];
-      const X = x * cy + z * sy, Z = -x * sy + z * cy, Yc = PY[i] - PIV;
-      const Y2 = Yc * cp + Z * sp, Z2 = -Yc * sp + Z * cp, p = D / (D + Z2);
-      const c = Math.floor((ox + X * p * u) / cw), r = Math.floor((oy - Y2 * p * u) / chh);
-      if (c < 0 || c >= cols || r < 0 || r >= rows) continue;
-      const idx = r * cols + c;
-      if (stamp[idx] !== frameId) { stamp[idx] = frameId; depth[idx] = Z2; owner[idx] = i; touched[nT++] = idx; }
-      else if (Z2 < depth[idx]) { depth[idx] = Z2; owner[idx] = i; }
+      if (hidden[CL[i]]) continue;
+      const X = PX[i], Z = PZ[i];
+      const X1 = X * cy + Z * sy, Z1 = -X * sy + Z * cy;
+      const Yd = (PR[i] - PIV) * R;
+      const c = Math.round(CX + X1) + C0;
+      const r = Math.round(PIV + (Yd * cp - Z1 * sp) / R) + R0;
+      if (c < 0 || c >= SC || r < 0 || r >= SR) continue;
+      const dz = Z1 * cp + Yd * sp;
+      const idx = r * SC + c;
+      if (stamp[idx] !== frameId) { stamp[idx] = frameId; depth[idx] = dz; owner[idx] = i; touched[nT++] = idx; }
+      else if (dz < depth[idx]) { depth[idx] = dz; owner[idx] = i; }
     }
 
     ctx.fillStyle = BG;
-    ctx.fillRect(0, 0, W, H);
-    let lastStyle = '';
+    ctx.fillRect(0, 0, Wpx, Hpx);
+    let last = '';
     for (let k = 0; k < nT; k++) {
-      const idx = touched[k], i = owner[idx], dz = depth[idx];
-      const fog = 1 - 0.14 * clamp(dz / 30, -1, 1);
-      let chr, style;
-      if (TYPE[i] === GROUND) {
-        chr = GROUND_CH[ATTR[i]];
-        style = GROUND_PAL[clamp(Math.round(4.5 * fog), 0, LV - 1)];
-      } else {
-        const nx = NX[i], nz = NZ[i];
-        const NX1 = nx * cy + nz * sy, NZ1 = -nx * sy + nz * cy;
-        const NY2 = NY[i] * cp + NZ1 * sp, NZ2 = -NY[i] * sp + NZ1 * cp;
-        const dot = NX1 * lx + NY2 * ly + NZ2 * lz;
-        const b = clamp(0.3 + 0.7 * Math.max(0, dot) + DITH[i], 0, 0.999);
-        const lv = clamp(Math.floor(b * fog * LV), 0, LV - 1);
-        if (TYPE[i] === LEAF) {
-          chr = LEAF_RAMP[(b * LEAF_RAMP.length) | 0];
-          style = LEAF_PAL[ATTR[i]][lv];
-        } else {
-          chr = segCh[ATTR[i]];
-          style = WOOD_PAL[clamp(lv + 2, 0, LV - 1)];
-        }
+      const idx = touched[k], i = owner[idx];
+      let lv = REST_LV;
+      if (turn > 0) {
+        const f = 1 - turn * 0.45 * clamp(depth[idx] / 20, -1, 1);   // near = brighter, far = dimmer
+        lv = clamp(Math.round(REST_LV + (f - 1) / 0.1), 0, FACT.length - 1);
       }
-      if (style !== lastStyle) { ctx.fillStyle = style; lastStyle = style; }
-      ctx.fillText(chr, ((idx % cols) + 0.5) * cw, ((idx / cols | 0) + 0.5) * chh);
+      const style = PAL[CO[i]][lv];
+      if (style !== last) { ctx.fillStyle = style; last = style; }
+      const chr = BR[i] >= 0 && turn > 0.15 ? brCh[BR[i]] : CH[i];
+      ctx.fillText(chr, gx0 + ((idx % SC) + 0.5) * cw, gy0 + ((idx / SC | 0) + 0.5) * chh);
     }
 
-    // falling leaves: smooth positions, hidden when the tree is in front of them
     for (const L of falling) {
-      proj(L.x + L.bx, L.y, L.z + L.bz, pa);
-      const c = Math.floor(pa[0] / cw), r = Math.floor(pa[1] / chh);
-      if (c >= 0 && c < cols && r >= 0 && r < rows) {
-        const idx = r * cols + c;
-        if (stamp[idx] === frameId && depth[idx] < pa[2] - 1) continue;
+      proj(L.x, L.row, L.z, pt);
+      if (turn > 0.15) {
+        const c = Math.round(pt[0]) + C0, r = Math.round(pt[1]) + R0;
+        if (c >= 0 && c < SC && r >= 0 && r < SR) {
+          const idx = r * SC + c;
+          if (stamp[idx] === frameId && depth[idx] < pt[2] - 1) continue;
+        }
       }
       ctx.save();
       ctx.globalAlpha = L.op;
-      ctx.fillStyle = L.col;
-      ctx.translate(pa[0], pa[1]);
+      ctx.fillStyle = L.co;
+      ctx.translate(gx0 + (pt[0] + C0 + 0.5) * cw, gy0 + (pt[1] + R0 + 0.5) * chh);
       ctx.rotate(L.rot);
       ctx.fillText(L.ch, 0, 0);
       ctx.restore();
-      lastStyle = '';
     }
   };
 
-  // ───────────────────────── interaction ─────────────────────────
+  // ════════════════════════════════════════════════════════════════
+  //  4. Drag to turn; on release it settles back to the front view
+  // ════════════════════════════════════════════════════════════════
+  const TAU = Math.PI * 2;
   let dragging = false, lastX = 0, lastY = 0, lastT = 0, moved = 0, dragVel = 0;
   canvas.addEventListener('pointerdown', e => {
-    dragging = true; moved = 0; dragVel = 0;
+    dragging = true; moved = 0; dragVel = 0; vel = 0;
     lastX = e.clientX; lastY = e.clientY; lastT = performance.now();
     canvas.setPointerCapture(e.pointerId);
     canvas.classList.add('dragging');
@@ -327,9 +362,9 @@
   canvas.addEventListener('pointermove', e => {
     if (!dragging) return;
     const now = performance.now(), dx = e.clientX - lastX, dy = e.clientY - lastY;
-    const k = 3.2 / Math.max(320, Math.min(W, H));                // ~one turn per screen-width drag
+    const k = 3.2 / Math.max(320, Math.min(Wpx, Hpx));
     yaw -= dx * k;
-    pitch = clamp(pitch + dy * k * 0.5, 0.03, 0.45);
+    pitch = clamp(pitch + dy * k * 0.5, 0, 0.35);
     const dt = Math.max(1, now - lastT) / 1000;
     dragVel = dragVel * 0.6 + (-dx * k / dt) * 0.4;
     moved += Math.abs(dx) + Math.abs(dy);
@@ -339,26 +374,32 @@
     if (!dragging) return;
     dragging = false;
     canvas.classList.remove('dragging');
-    if (moved < 6) { for (let i = 0; i < 14; i++) dropLeaf(); }       // tap: shake leaves loose
-    else vel = clamp(performance.now() - lastT > 80 ? 0 : dragVel, -6, 6);
+    if (moved < 6) { for (let i = 0; i < 14; i++) dropLeaf(); return; }
+    vel = performance.now() - lastT > 80 ? 0 : clamp(dragVel, -8, 8);
+    target = Math.round((yaw + vel * 0.35) / TAU) * TAU;     // nearest front view in the flick's direction
   };
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
 
-  // ───────────────────────── loop ─────────────────────────
-  let last = performance.now(), spawnAcc = 0, nextSpawn = 0.5, windT = 0;
+  // ════════════════════════════════════════════════════════════════
+  //  5. Loop
+  // ════════════════════════════════════════════════════════════════
+  let lastNow = performance.now(), spawnAcc = 0, nextSpawn = 0.5, windT = 0;
+  const K = 16, C = 8;                                       // critically damped spring
   const frame = now => {
-    const dt = Math.min((now - last) / 1000, 0.05);
-    last = now;
+    const dt = Math.min((now - lastNow) / 1000, 0.05);
+    lastNow = now;
 
     if (!dragging) {
-      vel *= Math.exp(-dt * 3);                                     // glide to a stop after a fling
-      if (Math.abs(vel) < 0.01) vel = 0;
+      vel += (K * (target - yaw) - C * vel) * dt;
       yaw += vel * dt;
+      pitch += (0 - pitch) * (1 - Math.exp(-dt * 6));
+      if (Math.abs(target - yaw) < 1e-3 && Math.abs(vel) < 1e-2) { yaw = target = 0; vel = 0; }
+      if (pitch < 1e-3) pitch = 0;
     }
 
     windT += dt;
-    const wind = Math.sin(windT * 0.23) * 0.6 + Math.sin(windT * 0.71) * 0.3;
+    const wind = Math.sin(windT * 0.23) * 0.5 + Math.sin(windT * 0.71) * 0.25;
     spawnAcc += dt;
     if (spawnAcc >= nextSpawn) { spawnAcc = 0; nextSpawn = 0.35 + rnd() * 1.1; dropLeaf(); }
 
@@ -366,12 +407,14 @@
       const L = falling[i];
       L.t += dt;
       if (L.rest < 0) {
-        L.y -= L.vy * dt;
-        L.x += wind * dt;
-        L.bx = Math.sin(L.p + L.t * L.fx) * L.ax;
-        L.bz = Math.cos(L.p * 1.7 + L.t * L.fz) * L.az;
+        L.row += L.vy * dt;
+        L.bx += wind * dt;
+        L.x = L.bx + Math.sin(L.p + L.t * L.freq) * L.amp;
+        L.z = L.bz + Math.cos(L.p * 1.7 + L.t * L.freq * 0.8) * L.zamp;
         L.rot += L.vr * dt;
-        if (L.y <= 0.3) { L.y = 0.3; L.rot = Math.round(L.rot / Math.PI) * Math.PI; L.rest = 2.5 + rnd() * 4; }
+        if (L.row >= GROUND - 0.15 && L.x * L.x + L.z * L.z < RG * RG) {
+          L.row = GROUND - 0.15; L.rot = Math.round(L.rot / Math.PI) * Math.PI; L.rest = 2.5 + rnd() * 4;
+        } else if (L.row > H + 2) L.op -= dt;
       } else {
         L.rest -= dt;
         if (L.rest <= 0) L.op -= dt * 0.5;
